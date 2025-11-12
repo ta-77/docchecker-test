@@ -1,0 +1,5 @@
+{
+  "name": "Automatic Document Checker",
+  "description": "An application to automatically check Word documents (.docx) for formatting and contextual errors, dramatically improving efficiency. This MVP allows uploading a single file to get a structured JSON of potential issues based on rules and AI.",
+  "requestFramePermissions": []
+}
