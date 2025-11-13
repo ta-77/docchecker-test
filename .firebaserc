@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "docchecker-test"
-  }
+    "default": "doccheck-test"
+  },
+  "targets": {},
+  "etags": {}
 }
