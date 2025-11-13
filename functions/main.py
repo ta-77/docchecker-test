@@ -3,6 +3,7 @@
 import os  # ★ 解決策 1: os がインポートされているか確認
 import re
 import io
+import json
 from firebase_admin import initialize_app
 from firebase_functions import https_fn, options  # ★ 解決策 2: options がインポートされているか確認
 from docx import Document
@@ -104,7 +105,7 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
 
         # --- FRB-4.2: レスポンス返却 ---
         return https_fn.Response(
-            mock_result,
+            json.dumps(mock_result, ensure_ascii=False),
             status=200,
             mimetype="application/json"
         )
