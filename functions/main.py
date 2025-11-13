@@ -1,38 +1,42 @@
 # functions/main.py
 
-import os
+import os  # ★ 解決策 1: os がインポートされているか確認
 import re
-import io # ファイルをメモリで扱うために必要
+import io
 from firebase_admin import initialize_app
-from firebase_functions import https_fn, options
+from firebase_functions import https_fn, options  # ★ 解決策 2: options がインポートされているか確認
 from docx import Document
 import google.generativeai as genai
 
 # Firebaseアプリの初期化
 initialize_app()
 
-# --- 重要 ---
-# ★タスク4（FRB-3.1）: Gemini APIキーをシークレットに設定する
-# ターミナルで `firebase functions:secrets:set GEMINI_API_KEY` を実行し、
-# 以下の `GEMINI_API_KEY` の部分にご自身のシークレット名を入力してください。
-# (シークレット名は 'GEMINI_API_KEY' が推奨です)
+# --- ★ APIキー設定（ローカル / 本番 両対応）---
+# 1. まずローカルの .env ファイルからキーを読み込もうとする
+api_key = os.environ.get("GEMINI_API_KEY")
+
+if not api_key:
+    # 2. ローカルにキーがなければ、本番（Blaze）のシークレットを参照する
+    api_key = options.SecretParam("GEMINI_API_KEY")
+
+# 3. 取得できたキーで genai を設定
 genai.configure(
-    api_key=options.SecretParam("GEMINI_API_KEY")
+    api_key=api_key
 )
+# --- ★ APIキー設定ここまで ---
+
 
 # --- ★ここからがバックエンドAPI本体 ---
 
-# /api/check へのリクエストを処理する関数 (firebase.json で設定)
-# v2 (第2世代) Cloud Functions を使用
 @https_fn.on_request(
-    region="us-central1", # 東京リージョン (推奨)
-    memory=options.MemoryOption.GB_1, # メモリ (必要に応じて調整)
-    timeout_sec=300, # タイムアウト (秒)
-    # フロントエンドのURL (Hosting URL) からのアクセスを許可する
-    # 開発中は "*" (すべて許可) でも良い
+    region="us-central1",  # ★ 解決策 3: ローカルエミュレータ用 (テスト用)
+    memory=options.MemoryOption.GB_1,
+    timeout_sec=300,
     cors=options.CorsOptions(
         cors_origins=[
-            "https*://docchecker-test.web.app" # ご自身のHosting URL
+            "http://127.0.0.1:5000", # ローカルエミュレータ用
+            "http://localhost:5000",  # ローカルエミュレータ用
+            "https*://doccheck-test.web.app" # 本番のHosting URL
         ],
         cors_methods=["post"]
     )
@@ -53,8 +57,8 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
 
     if not req.files or 'file' not in req.files:
         return https_fn.Response(
-            {"detail": "File not found in request"}, # services/documentCheckerService.ts が期待するエラー
-            status=400, # 400 Bad Request
+            {"detail": "File not found in request"},
+            status=400,
             mimetype="application/json"
         )
 
@@ -63,7 +67,7 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
     if uploaded_file.content_type != 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
         return https_fn.Response(
             {"detail": "Invalid file type. Only .docx is allowed."},
-            status=400, # 400 Bad Request
+            status=400,
             mimetype="application/json"
         )
 
@@ -73,16 +77,12 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
         # (これは「雛形」のため、ダミーの(モック)データを返します)
         # (タスク5, 6で、この部分を本物のロジックに置き換えます)
 
-        # ファイルをメモリ上で読み込む (タスク5で必要)
         # file_stream = io.BytesIO(uploaded_file.read())
         # document = Document(file_stream)
-        # print(f"Processing file: {uploaded_file.name}")
-
-        # AIモデルを取得 (タスク6で必要)
+        
         # model = genai.GenerativeModel("gemini-1.5-flash")
         
         # --- ダミーデータ (Mock) ---
-        # types.ts の CheckResult 型に一致するJSON
         mock_result = {
             "documentStructure": [
                 {
@@ -96,7 +96,7 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
                 }
             ],
             "aiSuggestions": [
-                {"message": "Pythonバックエンド(雛形)からの応答です。タスク5, 6でここにAIの解析結果が入ります。"}
+                {"message": "Pythonバックエンド(雛形)からの応答です。ローカルの .env からAPIキーを読み込みました。"}
             ]
         }
         # --- ダミーデータここまで ---
@@ -111,9 +111,9 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
 
     except Exception as e:
         # --- FRB-1.3: 内部エラー処理 ---
-        print(f"Internal Server Error: {e}") # ログにエラーを出力
+        print(f"Internal Server Error: {e}") 
         return https_fn.Response(
             {"detail": f"Internal server error: {str(e)}"},
-            status=500, # 500 Internal Server Error
+            status=500,
             mimetype="application/json"
         )
