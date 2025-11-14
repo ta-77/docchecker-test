@@ -1,27 +1,24 @@
 # functions/main.py
 
-import os  # ★ 解決策 1: os がインポートされているか確認
+import os
 import re
 import io
 import json
 from firebase_admin import initialize_app
-from firebase_functions import https_fn, options  # ★ 解決策 2: options がインポートされているか確認
+from firebase_functions import https_fn, options
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt  # Pt のインポート
 import google.generativeai as genai
 
 # Firebaseアプリの初期化
 initialize_app()
 
 # --- ★ APIキー設定（ローカル / 本番 両対応）---
-# 1. まずローカルの .env ファイルからキーを読み込もうとする
 api_key = os.environ.get("GEMINI_API_KEY")
 
 if not api_key:
-    # 2. ローカルにキーがなければ、本番（Blaze）のシークレットを参照する
     api_key = options.SecretParam("GEMINI_API_KEY")
 
-# 3. 取得できたキーで genai を設定
 genai.configure(
     api_key=api_key
 )
@@ -31,7 +28,7 @@ genai.configure(
 # --- ★ここからがバックエンドAPI本体 ---
 
 @https_fn.on_request(
-    region="us-central1",  # ★ 解決策 3: ローカルエミュレータ用 (テスト用)
+    region="us-central1",  # ローカルエミュレータ用 (テスト用)
     memory=options.MemoryOption.GB_1,
     timeout_sec=300,
     cors=options.CorsOptions(
@@ -73,10 +70,8 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
             mimetype="application/json"
         )
 
-# ... (def checkDocument ... の直後から) ...
+    # --- ★ ここからが単一の try ブロック ---
     try:
-        # --- ★ ここからが本番ロジック (タスク5 & 6) ---
-
         # === FRB-2.0: Word文書の解析 ===
         document_structure = []
         full_text_for_ai = [] # AIに渡すためのプレーンテキスト
@@ -88,7 +83,6 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
         # === FRB-2.2 & 2.3 & 2.4: ルールベースチェック ===
         
         # ルール定義 (例: 本文の1行目インデントは 10.5pt = 1文字)
-        # ※実際の値（Pt）は、ご自身のフォーマットに合わせて調整してください
         REQUIRED_FIRST_LINE_INDENT = Pt(10.5) 
         
         for para in document.paragraphs:
@@ -109,30 +103,40 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
 
             for run in para.runs:
                 run_text = run.text
-                run_font = run.font.name
                 run_errors = []
+                
+                # 表示/判定用のフォント名を初期化
+                run_font_to_check = None
 
                 # --- FRB-2.3 (フォントチェック) ---
                 
                 # ルールA: 半角数字は Century
-                if re.search(r'^[0-9]+$', run_text.strip()): # .strip() で空白文字を除去
-                    if run_font != 'Century':
+                if re.search(r'^[0-9]+$', run_text.strip()):
+                    run_font_to_check = run.font.name # ラテン文字フォントを取得
+                    if run_font_to_check != 'Century':
                         run_errors.append({
                             "type": "FontError",
-                            "message": f"フォントが 'Century' ではありません (現在: {run_font})"
+                            "message": f"フォントが 'Century' ではありません (現在: {run_font_to_check})"
                         })
                 
                 # ルールB: 日本語を含む場合は MS明朝
                 elif re.search(r'[ぁ-んァ-ヶ一-龠]', run_text):
-                    if run_font != 'MS明朝':
+                    # ★★★ 修正点 ★★★
+                    # run.font.name ではなく .east_asia を取得する
+                    run_font_to_check = run.font.east_asia 
+                    if run_font_to_check != 'MS明朝':
                         run_errors.append({
                             "type": "FontError",
-                            "message": f"フォントが 'MS明朝' ではありません (現在: {run_font})"
+                            "message": f"フォントが 'MS明朝' ではありません (現在: {run_font_to_check})"
                         })
+                
+                # その他の文字（記号など）
+                else:
+                    run_font_to_check = run.font.name # とりあえずラテン文字設定を格納
                 
                 paragraph_runs.append({
                     "text": run_text,
-                    "font": run_font,
+                    "font": run_font_to_check, # 判定に使ったフォント名を格納
                     "errors": run_errors
                 })
 
@@ -146,12 +150,8 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
 
         # === FRB-3.0: AIによる内容チェック ===
         ai_suggestions = []
-        
-        # 結合した全テキストをAIに渡す
         combined_text = "\n".join(full_text_for_ai)
-
-        # AIモデルとプロンプトの定義
-        model = genai.GenerativeModel("gemini-1.5-flash") # 高速・低コストモデル
+        model = genai.GenerativeModel("gemini-1.5-flash")
         
         prompt = f"""
         あなたは優秀なビジネス文書の校閲者です。
@@ -201,7 +201,6 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
             mimetype="application/json"
         )
 
-    # ... (except Exception as e: はそのまま残す) ...
     except Exception as e:
         # --- FRB-1.3: 内部エラー処理 ---
         print(f"Internal Server Error: {e}") 
