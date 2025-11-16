@@ -121,14 +121,24 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
                 
                 # ルールB: 日本語を含む場合は MS明朝
                 elif re.search(r'[ぁ-んァ-ヶ一-龠]', run_text):
+                    
                     # ★★★ 修正点 ★★★
-                    # run.font.name ではなく .east_asia を取得する
-                    run_font_to_check = run.font.east_asia 
-                    if run_font_to_check != 'MS明朝':
-                        run_errors.append({
-                            "type": "FontError",
-                            "message": f"フォントが 'MS明朝' ではありません (現在: {run_font_to_check})"
-                        })
+                    # .east_asia 属性が存在するかどうかを先に確認する
+                    if hasattr(run.font, 'east_asia'):
+                        run_font_to_check = run.font.east_asia
+                        if run_font_to_check != 'MS明朝':
+                            run_errors.append({
+                                "type": "FontError",
+                                "message": f"フォント(東アジア)が 'MS明朝' ではありません (現在: {run_font_to_check})"
+                            })
+                    else:
+                        # .east_asia が存在しない場合、.name (ラテン文字) にフォールバックする
+                        run_font_to_check = run.font.name
+                        if run_font_to_check != 'MS明朝':
+                            run_errors.append({
+                                "type": "FontError",
+                                "message": f"フォント(標準)が 'MS明朝' ではありません (現在: {run_font_to_check})"
+                            })
                 
                 # その他の文字（記号など）
                 else:
@@ -136,7 +146,7 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
                 
                 paragraph_runs.append({
                     "text": run_text,
-                    "font": run_font_to_check, # 判定に使ったフォント名を格納
+                    "font": str(run_font_to_check), # (Noneの可能性を考慮し str() で囲む)
                     "errors": run_errors
                 })
 
@@ -151,40 +161,47 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
         # === FRB-3.0: AIによる内容チェック ===
         ai_suggestions = []
         combined_text = "\n".join(full_text_for_ai)
-        model = genai.GenerativeModel("gemini-1.5-flash")
         
-        prompt = f"""
-        あなたは優秀なビジネス文書の校閲者です。
-        以下のテキストを読み、[1] 敬語やビジネス表現の誤り、[2] 論理的な矛盾や不明瞭な点、[3] 必須項目（日付、担当者名など）の欠落の可能性、を指摘してください。
-        指摘事項のみを、簡潔なメッセージのリストとしてJSON配列の形式で回答してください。
-        
-        例:
-        [
-          {{ "message": "「〜していただく」は二重敬語の可能性があります。" }},
-          {{ "message": "日付の記載が見当たりません。" }}
-        ]
-
-        テキスト:
-        ---
-        {combined_text}
-        ---
-        """
-
-        try:
-            # AIにリクエストを送信
-            response = model.generate_content(prompt)
+        # テキストが空でない場合のみAIチェックを実行
+        if combined_text.strip():
+            model = genai.GenerativeModel("gemini-1.5-flash")
             
-            # AIの回答をパース ( "```json\n[...]\n```" のようなマークダウンを除去)
-            clean_response = re.sub(r'```json\n?|\n?```', '', response.text.strip())
+            prompt = f"""
+            あなたは優秀なビジネス文書の校閲者です。
+            以下のテキストを読み、[1] 敬語やビジネス表現の誤り、[2] 論理的な矛盾や不明瞭な点、[3] 必須項目（日付、担当者名など）の欠落の可能性、を指摘してください。
+            指摘事項のみを、簡潔なメッセージのリストとしてJSON配列の形式で回答してください。
             
-            # JSONとして解析
-            ai_suggestions = json.loads(clean_response)
+            例:
+            [
+              {{ "message": "「〜していただく」は二重敬語の可能性があります。" }},
+              {{ "message": "日付の記載が見当たりません。" }}
+            ]
 
-        except Exception as ai_e:
-            print(f"AI Error: {ai_e}")
-            # AIが失敗しても、ルールチェックの結果は返す
+            テキスト:
+            ---
+            {combined_text}
+            ---
+            """
+
+            try:
+                # AIにリクエストを送信
+                response = model.generate_content(prompt)
+                
+                # AIの回答をパース ( "```json\n[...]\n```" のようなマークダウンを除去)
+                clean_response = re.sub(r'```json\n?|\n?```', '', response.text.strip())
+                
+                # JSONとして解析
+                ai_suggestions = json.loads(clean_response)
+
+            except Exception as ai_e:
+                print(f"AI Error: {ai_e}")
+                # AIが失敗しても、ルールチェックの結果は返す
+                ai_suggestions = [
+                    {"message": f"AIによるチェック中にエラーが発生しました: {str(ai_e)}"}
+                ]
+        else:
             ai_suggestions = [
-                {"message": f"AIによるチェック中にエラーが発生しました: {str(ai_e)}"}
+                {"message": "文書が空のようです。AIチェックはスキップされました。"}
             ]
 
 
