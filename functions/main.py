@@ -7,8 +7,12 @@ import json
 from firebase_admin import initialize_app
 from firebase_functions import https_fn, options
 from docx import Document
-from docx.shared import Pt  # Pt のインポート
-import google.generativeai as genai
+from docx.shared import Pt
+
+# --- ★ 修正点 1: 新しいライブラリのインポート ---
+# 'google.generativeai' ではなく 'google.genai' から GenerativeModel を直接インポート
+from google.genai import GenerativeModel
+# --- ★ 修正ここまで ---
 
 # Firebaseアプリの初期化
 initialize_app()
@@ -19,10 +23,9 @@ api_key = os.environ.get("GEMINI_API_KEY")
 if not api_key:
     api_key = options.SecretParam("GEMINI_API_KEY")
 
-genai.configure(
-    api_key=api_key
-)
-# --- ★ APIキー設定ここまで ---
+# --- ★ 修正点 2: genai.configure() は不要になったので削除 ---
+# (genai.configure(api_key=api_key) は削除)
+# --- ★ 修正ここまで ---
 
 
 # --- ★ここからがバックエンドAPI本体 ---
@@ -122,14 +125,13 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
                 # ルールB: 日本語を含む場合は MS明朝
                 elif re.search(r'[ぁ-んァ-ヶ一-龠]', run_text):
                     
-                    # ★★★ 修正点 ★★★
-                    # .east_asia 属性が存在するかどうかを先に確認する
+                    # .east_asia 属性が存在するかどうかを先に確認する (hasattr)
                     if hasattr(run.font, 'east_asia'):
                         run_font_to_check = run.font.east_asia
                         if run_font_to_check != 'MS明朝':
                             run_errors.append({
                                 "type": "FontError",
-                                "message": f"フォント(東アジア)が 'MS明朝' ではありません (現在: {run_font_to_check})"
+                                "message": f"フォント(東アジア)が 'MS明B' ではありません (現在: {run_font_to_check})"
                             })
                     else:
                         # .east_asia が存在しない場合、.name (ラテン文字) にフォールバックする
@@ -164,7 +166,14 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
         
         # テキストが空でない場合のみAIチェックを実行
         if combined_text.strip():
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            
+            # --- ★ 修正点 3: 新しいライブラリ (google-genai) の呼び出し方 ---
+            # クライアントの初期化 (api_key は関数の先頭で読み込んだものを使用)
+            client = GenerativeModel(
+                model_name="gemini-1.5-flash", # ★ ご希望の flash モデル
+                api_key=api_key
+            )
+            # --- ★ 修正ここまで ---
             
             prompt = f"""
             あなたは優秀なビジネス文書の校閲者です。
@@ -184,8 +193,9 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
             """
 
             try:
-                # AIにリクエストを送信
-                response = model.generate_content(prompt)
+                # --- ★ 修正点 4: 新しいライブラリでの呼び出し ---
+                response = client.generate_content(prompt)
+                # --- ★ 修正ここまで ---
                 
                 # AIの回答をパース ( "```json\n[...]\n```" のようなマークダウンを除去)
                 clean_response = re.sub(r'```json\n?|\n?```', '', response.text.strip())
