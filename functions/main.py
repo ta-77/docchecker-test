@@ -99,7 +99,8 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
                 run_errors = []
                 run_font_to_check = None
 
-                # フォントチェック
+                # --- フォントチェックロジック ---
+
                 # ルールA: 半角数字は Century
                 if re.search(r'^[0-9]+$', run_text.strip()):
                     run_font_to_check = run.font.name
@@ -111,22 +112,30 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
                 
                 # ルールB: 日本語を含む場合は MS明朝
                 elif re.search(r'[ぁ-んァ-ヶ一-龠]', run_text):
-                    # .east_asia 属性の安全な取得
-                    if hasattr(run.font, 'east_asia'):
-                        run_font_to_check = run.font.east_asia
-                        if run_font_to_check != 'MS明朝':
-                            run_errors.append({
-                                "type": "FontError",
-                                "message": f"フォント(東アジア)が 'MS明朝' ではありません (現在: {run_font_to_check})"
-                            })
-                    else:
-                        run_font_to_check = run.font.name
-                        if run_font_to_check != 'MS明朝':
-                            run_errors.append({
-                                "type": "FontError",
-                                "message": f"フォント(標準)が 'MS明朝' ではありません (現在: {run_font_to_check})"
-                            })
+                    
+                    # 1. まず Run（文字単位）の設定を確認
+                    ea_font = getattr(run.font, 'east_asia', None)
+                    
+                    # 2. Runに設定がなければ、Paragraph Style（段落スタイル）の設定を確認
+                    if not ea_font and para.style:
+                        # スタイルのフォント設定を取得
+                        style_font = getattr(para.style, 'font', None)
+                        if style_font:
+                            ea_font = getattr(style_font, 'east_asia', None)
+
+                    # 3. それでもなければ「継承（デフォルト）」とみなす
+                    # ※ 誤判定を防ぐため、Noneの場合はエラーにしない（デフォルト設定を信頼する）
+                    #    また、絶対に run.font.name (Century) を代入しない
+                    
+                    if ea_font and ea_font != 'MS明朝':
+                         run_errors.append({
+                            "type": "FontError",
+                            "message": f"フォント(東アジア)が 'MS明朝' ではありません (現在: {ea_font})"
+                        })
+                    # ea_font が None の場合は、MS明朝(デフォルト)とみなしてパスさせる
+
                 else:
+                    # その他の記号などはチェックしない、または run.font.name を参考程度に取得
                     run_font_to_check = run.font.name
                 
                 paragraph_runs.append({
@@ -169,9 +178,9 @@ def checkDocument(req: https_fn.Request) -> https_fn.Response:
             """
 
             try:
-                # generate_content の呼び出し方が変わりました
+                # generate_content の呼び出し方
                 response = client.models.generate_content(
-                    model="gemini-1.5-flash", 
+                    model="gemini-2.0-flash", 
                     contents=prompt
                 )
                 
